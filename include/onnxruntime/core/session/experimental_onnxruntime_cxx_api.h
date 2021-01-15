@@ -19,11 +19,12 @@
 #pragma once
 #include "onnxruntime_cxx_api.h"
 
-namespace Ort::Experimental {
+namespace Ort {
+namespace Experimental {
 
 struct Session : Ort::Session {
-  Session(Env& env, ORTCHAR_T* model_path, SessionOptions& options)
-      : Ort::Session(env, model_path, options){};
+  Session(Env& env, std::basic_string<ORTCHAR_T>& model_path, SessionOptions& options)
+      : Ort::Session(env, model_path.data(), options){};
   Session(Env& env, void* model_data, size_t model_data_length, SessionOptions& options)
       : Ort::Session(env, model_data, model_data_length, options){};
 
@@ -62,6 +63,7 @@ struct Value : Ort::Value {
   static Ort::Value CreateTensor(const std::vector<int64_t>& shape, ONNXTensorElementDataType type);
 };
 
-}  // namespace Ort::Experimental
+}
+}
 
 #include "experimental_onnxruntime_cxx_inline.h"

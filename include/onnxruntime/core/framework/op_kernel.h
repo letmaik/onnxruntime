@@ -17,8 +17,8 @@
 #include "core/framework/sparse_tensor.h"
 #include "core/graph/constants.h"
 #include "core/graph/graph_viewer.h"
+#include "core/graph/onnx_protobuf.h"
 #include "gsl/gsl"
-#include "onnx/defs/schema.h"
 
 namespace onnxruntime {
 class IExecutionFrame;
@@ -47,6 +47,27 @@ class OpKernel {
 
   virtual Status ComputeAsync(_Inout_ OpKernelContext*, DoneCallback) const ORT_MUST_USE_RESULT {
     ORT_NOT_IMPLEMENTED(__FUNCTION__, " is not implemented");
+  }
+
+  // Override this function to PrePack initialized constant tensor to the format as needed.
+  // For example, MatMul kernel can pack the input B if it is constant like code below.
+  //   Status PrePack(const Tensor& tensor, int input_idx, bool& is_packed) override {
+  //     is_packed = false;
+  //     if (input_idx == 1) {
+  //       this.Pack(tensor, this.buffer_);
+  //       is_packed = true;
+  //     }
+  //     return Status::OK();
+  //   }
+  // Please refer to MatMulIntegerToFloatBase for a complete example
+  // @param tesnor: The initialized constant tensor
+  // @param input_idx: The input index of the tensor in this kernel
+  // @param is_packed: Set it to true if the kernel packed the tensor or to false
+  //                   The kernel is responsible keep the packed data and related metadata if is_packed is set to true
+  //                   And the original intialized constant tensor will be released and not accessible anymore in Compute function.
+  virtual Status PrePack(const Tensor& /*tensor*/, int /*input_idx*/, bool& is_packed) {
+    is_packed = false;
+    return Status::OK();
   }
 
   const OrtMemoryInfo& Allocator(int id, OrtMemType mem_type) const {
@@ -82,10 +103,11 @@ class OpKernelContext {
   template <typename T>
   const T* Input(int index) const {
     const OrtValue* p_ml_value = GetInputMLValue(index);
-    try {
+    ORT_TRY {
       return p_ml_value ? &(p_ml_value->Get<T>()) : nullptr;
-    } catch (const std::exception& /*e*/) {
-      throw OnnxRuntimeException(ORT_WHERE_WITH_STACK, "Missing Input: " + kernel_->Node().InputDefs()[index]->Name());
+    }
+    ORT_CATCH(const std::exception& /*e*/) {
+      ORT_THROW("Missing Input: " + kernel_->Node().InputDefs()[index]->Name());
     }
   }
 
@@ -111,6 +133,8 @@ class OpKernelContext {
   // The memory allocation will be done on-the-fly with given tensor shape.
   // Return nullptr if the output is an unused optional output.
   Tensor* Output(int index, const TensorShape& shape);
+  Tensor* Output(int index, const std::vector<int64_t>& shape);
+  Tensor* Output(int index, const std::initializer_list<int64_t>& shape);
 
   // Fetch a required tensor output, enforcing that it is present.
   Tensor& RequiredOutput(int index, const TensorShape& shape) {
@@ -125,6 +149,16 @@ class OpKernelContext {
   // Memory allocation for the output may happen when this method is invoked,
   // unless static optimization pre-allocates it.
   SparseTensor* Output(int index, size_t num_values, const TensorShape& shape);
+
+  // Retrieve indexed shape obtained from memory planning before actual
+  // computation. If the indexed shape cannot be inferred, this function returns
+  // false.
+  bool TryGetInferredInputShape(int index, TensorShape& shape) const;
+
+  // Retrieve indexed shape obtained from memory planning before actual
+  // computation. If the indexed shape cannot be inferred, this function returns
+  // false.
+  bool TryGetInferredOutputShape(int index, TensorShape& shape) const;
 
   const logging::Logger& Logger() const {
     return *logger_;
@@ -188,9 +222,26 @@ class OpKernelContext {
   const std::string& GetOpDomain() const;
 
   /**
+  Returns the optype of the underlying kernel
+  **/
+  const std::string& GetOpType() const;
+
+  /**
+  Returns the node name of the underlying kernel
+  **/
+  const std::string& GetNodeName() const;
+
+  /**
   Returns the intra-op threadpool, if available.
   */
   _Ret_maybenull_ onnxruntime::concurrency::ThreadPool* GetOperatorThreadPool() const { return threadpool_; }
+
+  /**
+  Returns whether deterministic computation is preferred.
+  */
+  virtual bool GetUseDeterministicCompute() const {
+    return true;
+  }
 
  protected:
   onnxruntime::NodeIndex GetNodeIndex() const;
@@ -248,6 +299,8 @@ struct KernelCreateInfo {
   KernelCreateInfo(KernelCreateInfo&& other) noexcept
       : kernel_def(std::move(other.kernel_def)),
         kernel_create_func(std::move(other.kernel_create_func)) {}
+
+  KernelCreateInfo() = default;
 };
 
 using KernelCreateMap = std::multimap<std::string, KernelCreateInfo>;
@@ -276,6 +329,13 @@ namespace cuda {
 template <typename T>
 KernelCreateInfo BuildKernelCreateInfo();
 }  // namespace cuda
+}  // namespace contrib
+
+namespace contrib {
+namespace rocm {
+template <typename T>
+KernelCreateInfo BuildKernelCreateInfo();
+}  // namespace rocm
 }  // namespace contrib
 
 using BuildKernelCreateInfoFn = KernelCreateInfo (*)();
@@ -394,6 +454,23 @@ using BuildKernelCreateInfoFn = KernelCreateInfo (*)();
             .Provider(provider)                                                                                              \
             .Build(),                                                                                                        \
         static_cast<KernelCreatePtrFn>([](const OpKernelInfo& info) -> OpKernel* { return new __VA_ARGS__(info); }));        \
+  }
+
+#define ONNX_OPERATOR_VERSIONED_TWO_TYPED_KERNEL_CLASS_NAME(provider, domain, startver, endver, type1, type2, name) \
+  provider##_##name##_##domain##_ver##startver##_##endver##_##type1##_##type2
+
+#define ONNX_OPERATOR_VERSIONED_TWO_TYPED_KERNEL_EX(name, domain, startver, endver, type1, type2, provider, builder, ...)                \
+  class ONNX_OPERATOR_VERSIONED_TWO_TYPED_KERNEL_CLASS_NAME(provider, domain, startver, endver, type1, type2, name);                     \
+  template <>                                                                                                                            \
+  KernelCreateInfo                                                                                                                       \
+  BuildKernelCreateInfo<ONNX_OPERATOR_VERSIONED_TWO_TYPED_KERNEL_CLASS_NAME(provider, domain, startver, endver, type1, type2, name)>() { \
+    return KernelCreateInfo(                                                                                                             \
+        builder.SetName(#name)                                                                                                           \
+            .SetDomain(domain)                                                                                                           \
+            .SinceVersion(startver, endver)                                                                                              \
+            .Provider(provider)                                                                                                          \
+            .Build(),                                                                                                                    \
+        static_cast<KernelCreatePtrFn>([](const OpKernelInfo& info) -> OpKernel* { return new __VA_ARGS__(info); }));                    \
   }
 
 // Use within macro definitions to create a custom vector of constraints.

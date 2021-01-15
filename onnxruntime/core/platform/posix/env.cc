@@ -162,10 +162,11 @@ class PosixThread : public EnvThread {
  private:
   static void* ThreadMain(void* param) {
     std::unique_ptr<Param> p((Param*)param);
-    try {
+    ORT_TRY {
       // Ignore the returned value for now
       p->start_address(p->index, p->param);
-    } catch (std::exception&) {
+    }
+    ORT_CATCH(const std::exception&) {
       p->param->Cancel();
     }
     return nullptr;
@@ -184,12 +185,6 @@ class PosixEnv : public Env {
                           unsigned (*start_address)(int id, Eigen::ThreadPoolInterface* param),
                           Eigen::ThreadPoolInterface* param, const ThreadOptions& thread_options) override {
     return new PosixThread(name_prefix, index, start_address, param, thread_options);
-  }
-  Task CreateTask(std::function<void()> f) override {
-    return Task{std::move(f)};
-  }
-  void ExecuteTask(const Task& t) override {
-    t.f();
   }
 
   int GetNumCpuCores() const override {
@@ -423,9 +418,9 @@ class PosixEnv : public Env {
   }
 
   common::Status LoadDynamicLibrary(const std::string& library_filename, void** handle) const override {
-    char* error_str = dlerror();  // clear any old error_str
+    dlerror();  // clear any old error_str
     *handle = dlopen(library_filename.c_str(), RTLD_NOW | RTLD_LOCAL);
-    error_str = dlerror();
+    char* error_str = dlerror();
     if (!*handle) {
       return common::Status(common::ONNXRUNTIME, common::FAIL,
                             "Failed to load library " + library_filename + " with error: " + error_str);
@@ -437,9 +432,9 @@ class PosixEnv : public Env {
     if (!handle) {
       return common::Status(common::ONNXRUNTIME, common::FAIL, "Got null library handle");
     }
-    char* error_str = dlerror();  // clear any old error_str
+    dlerror();  // clear any old error_str
     int retval = dlclose(handle);
-    error_str = dlerror();
+    char* error_str = dlerror();
     if (retval != 0) {
       return common::Status(common::ONNXRUNTIME, common::FAIL,
                             "Failed to unload library with error: " + std::string(error_str));
@@ -448,9 +443,9 @@ class PosixEnv : public Env {
   }
 
   common::Status GetSymbolFromLibrary(void* handle, const std::string& symbol_name, void** symbol) const override {
-    char* error_str = dlerror();  // clear any old error str
+    dlerror();  // clear any old error str
     *symbol = dlsym(handle, symbol_name.c_str());
-    error_str = dlerror();
+    char* error_str = dlerror();
     if (error_str) {
       return common::Status(common::ONNXRUNTIME, common::FAIL,
                             "Failed to get symbol " + symbol_name + " with error: " + error_str);

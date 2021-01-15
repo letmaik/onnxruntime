@@ -33,6 +33,9 @@ OrtEnv* ort_env;
 
 void AdapterSessionTestSetup() {
   winrt::init_apartment();
+#ifdef BUILD_INBOX
+  winrt_activation_handler = WINRT_RoGetActivationFactory;
+#endif
   WINML_EXPECT_HRESULT_SUCCEEDED(Microsoft::WRL::MakeAndInitialize<_winml::OnnxruntimeEngineFactory>(engine_factory.put()));
   WINML_EXPECT_HRESULT_SUCCEEDED(engine_factory->GetOrtEnvironment(&ort_env));
   WINML_EXPECT_NOT_EQUAL(nullptr, winml_adapter_api = engine_factory->UseWinmlAdapterApi());
@@ -223,7 +226,7 @@ void CopyInputAcrossDevices() {
   constexpr size_t input_tensor_size = [&dimensions]() {
     size_t size = 1;
     for (auto dim : dimensions)
-      size *= dim;
+      size *= static_cast<size_t>(dim);
     return size;
   } ();
 
@@ -259,7 +262,7 @@ void CopyInputAcrossDevices_DML() {
   constexpr size_t input_tensor_size = [&dimensions]() {
     size_t size = 1;
     for (auto dim : dimensions)
-      size *= dim;
+      size *= static_cast<size_t>(dim);
     return size;
   } ();
 
@@ -278,6 +281,16 @@ void CopyInputAcrossDevices_DML() {
 
   ort_api->ReleaseValue(input_tensor);
   ort_api->ReleaseMemoryInfo(memory_info);
+}
+
+void GetNumberOfIntraOpThreads(){
+  const auto session_options = CreateUniqueOrtSessionOptions();
+  uint32_t desired_num_threads = std::thread::hardware_concurrency() / 2;
+  ort_api->SetIntraOpNumThreads(session_options.get(), desired_num_threads);
+  const auto session = CreateUniqueOrtSession(session_options);
+  uint32_t num_threads;
+  winml_adapter_api->SessionGetNumberOfIntraOpThreads(session.get(), &num_threads);
+  WINML_EXPECT_EQUAL(num_threads, desired_num_threads);
 }
 }
 
@@ -299,7 +312,8 @@ const AdapterSessionTestAPI& getapi() {
     LoadAndPurloinModel,
     Profiling,
     CopyInputAcrossDevices,
-    CopyInputAcrossDevices_DML
+    CopyInputAcrossDevices_DML,
+    GetNumberOfIntraOpThreads
   };
 
   if (SkipGpuTests()) {
@@ -308,6 +322,9 @@ const AdapterSessionTestAPI& getapi() {
     api.RegisterGraphTransformers_DML = SkipTest;
     api.RegisterCustomRegistry_DML = SkipTest;
     api.CopyInputAcrossDevices_DML = SkipTest;
+  }
+  if (SkipTestsImpactedByOpenMP()) {
+    api.GetNumberOfIntraOpThreads = SkipTest;
   }
   return api;
 }

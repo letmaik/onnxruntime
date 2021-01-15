@@ -10,11 +10,11 @@
 #include "core/framework/ml_value.h"
 #include "core/providers/providers.h"
 #include "orttraining/core/framework/checkpoint_registry.h"
-#include "orttraining/core/framework/mpi_setup.h"
+#include "orttraining/core/framework/communication/mpi/mpi_context.h"
+#include "orttraining/core/framework/pipeline.h"
 #include "orttraining/core/graph/optimizer_config.h"
 #include "orttraining/core/session/training_session.h"
 #include "orttraining/models/runner/data_loader.h"
-#include "orttraining/models/runner/pipeline.h"
 
 namespace onnxruntime {
 namespace training {
@@ -27,6 +27,10 @@ class TrainingRunner {
     PathString model_with_training_graph_path;   // To save the model after adding loss func and backward graph.
     PathString model_actual_running_graph_path;  // To save the model with the actual running graph after transformations.
     PathString model_gist_encode_path;           // To save the model with gist encoding.
+    PathString pipeline_partitioned_model_path;  // To save the model after pipeline partition. Note: in the pipeline case,
+                                                 // different ranks may resident in the same node. This could lead to a
+                                                 // potential write conflict. It is user's responsibility to make sure
+                                                 // different rank is passed in with different pipeline_partitioned_model_path value.
 
     PathString train_data_dir;
     PathString test_data_dir;
@@ -90,12 +94,11 @@ class TrainingRunner {
     // Whether to partition the optimizer state across nodes for distributed training.
     ZeROConfig deepspeed_zero{};
     // Use Adasum for allreduce.
-    bool use_adasum = false;
+    bool enable_adasum = false;
     // Use Gist on CPU.
     bool use_gist = false;
     // Whether we collect execution profile trace during this run.
     bool use_profiler = false;
-    MPIContext mpi_context;
     bool skip_evaluation = false;
     bool dump_fetches = false;
     bool dump_convergence_metrics = false;
@@ -103,10 +106,12 @@ class TrainingRunner {
     VectorString fetch_names;
 
     bool use_mixed_precision = false;
+    bool use_bfloat16 = false;
     float loss_scale = 1.0f;
-    bool use_fp16_moments = false;
-    bool use_fp16_initializer = true;
-    bool allreduce_in_fp16 = false;
+    bool use_mixed_precision_moments = false;
+    bool use_mixed_precision_initializer = true;
+    bool allreduce_in_mixed_precision_type = false;
+    bool layernorm_stash_as_fp32 = true;
 
     // Tensorboard configuration.
     PathString log_dir;  // Path to write Tensorboard events to.
@@ -119,21 +124,22 @@ class TrainingRunner {
     float cuda_mem_limit_in_gb = -1.0f;
 
     bool EnableTensorboard() const {
-      return !is_perf_test && !log_dir.empty() && mpi_context.world_rank == 0;
+      return !is_perf_test && !log_dir.empty() && MPIContext::GetInstance().GetWorldRank() == 0;
     }
 
     bool UseCuda() const {
-      return providers.find(kCudaExecutionProvider) != providers.end();
+      return providers.find(kCudaExecutionProvider) != providers.end() ||
+             providers.find(kRocmExecutionProvider) != providers.end();
     }
 
     AdasumReductionType GetAdasumReductionType() const {
       // TODO support more algos when they become available.
-      if (!use_adasum) {
+      if (!enable_adasum) {
         return AdasumReductionType::None;
       } else if (!UseCuda()) {
         return AdasumReductionType::CpuReduction;
       } else {
-        return AdasumReductionType::GpuHierarchical;
+        return AdasumReductionType::GpuHierarchicalReduction;
       }
     }
 
@@ -160,6 +166,15 @@ class TrainingRunner {
     // pipeline partition information to do online-partition. If the graph is
     // pre-partitioned, no need to fill this value.
     std::vector<TrainingSession::TrainingConfiguration::CutInfo> pipeline_partition_cut_list;
+    // Alternative for partition. We map each operator's string identifier to
+    // a stage identifier. We identify operators using the name of any of
+    // their outputs. All operators in the graph must be in the domain of this
+    // map.
+    // For example, op_id_to_stage["MatMul0"] being 5 means the operator node
+    // called "MatMul0" locates on the 6th stage. Note that stage ID is 0-based
+    // index.
+    std::map<std::string, int> op_id_to_stage;
+
     // model_paths[i] is the name of the pipeline stage for i-th process.
     // The i-th file is run by the i-th MPI rank.
     // If model_paths is not empty, model partition transformation may not be internally invoked.
@@ -169,7 +184,14 @@ class TrainingRunner {
 
     // Enable GELU approximation
     bool enable_gelu_approximation = false;
-  
+    // Enable checkpointing of attention dropout to save memory
+    bool attn_dropout_recompute = false;
+    // Enable checkpointing of Gelu activation output to save memory
+    bool gelu_recompute = false;
+    // Enable checkpointing of transformer layer output to save memory
+    bool transformer_layer_recompute = false;
+    // Number of layers to apply recompute
+    int number_recompute_layers = 0;
     // Use invertible layernorm grad
     bool use_invertible_layernorm_grad = false;
   };
@@ -213,6 +235,7 @@ class TrainingRunner {
                         VectorString& fetch_names,
                         std::vector<MLValue>& feeds,
                         size_t& gradient_accumulation_step_count);
+  void CheckWorkerException(const std::exception_ptr& p);
   Status TrainingLoop(IDataLoader& training_data_loader, IDataLoader* test_data_loader,
     const MapStringToString& mapped_dimensions);
   Status Evaluate(TrainingSession& session, IDataLoader& data_loader);
@@ -247,7 +270,7 @@ class TrainingRunner {
   // Information for running pipeline.
   pipeline::PipelineContext pipeline_context_;
   // Pipeline schedule for deciding when to run batch, forward, or backward.
-  pipeline::PipelineSchedule pipeline_schedule_;
+  pipeline::PipelineScheduler pipeline_schedule_;
   // Workers to run pipeline stage.
   pipeline::PipelineWorkerPool pipeline_worker_pool_;
 };

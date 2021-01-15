@@ -17,7 +17,7 @@ struct VariadicElementwiseOpTraits;
 #define DEFINE_TRAITS(VariadicElementwiseOpTag, ImplName)           \
   template <typename T>                                             \
   struct VariadicElementwiseOpTraits<T, VariadicElementwiseOpTag> { \
-    using ScalarComputeFunctor = OP_##ImplName<T, T>;               \
+    using ScalarComputeFunctor = OP_##ImplName<T, T, T>;            \
                                                                     \
     static void ComputeFn(                                          \
         int32_t output_rank_or_simple_broadcast,                    \
@@ -121,8 +121,15 @@ void Impl_NoBroadcastInputBatch(
 // D: double
 // O: bool
 
+#if CUDA_VERSION >= 11000 && (__CUDA_ARCH__ >= 800 || !defined(__CUDA_ARCH__))
+#define SPECIALIZE_IMPL_BF16(VariadicElementwiseOpTag) SPECIALIZE_IMPL(nv_bfloat16, VariadicElementwiseOpTag)
+#else
+#define SPECIALIZE_IMPL_BF16(VariadicElementwiseOpTag)
+#endif
+
 #define SPECIALIZE_IMPL_HFD(VariadicElementwiseOpTag) \
   SPECIALIZE_IMPL(half, VariadicElementwiseOpTag)     \
+  SPECIALIZE_IMPL_BF16(VariadicElementwiseOpTag)      \
   SPECIALIZE_IMPL(float, VariadicElementwiseOpTag)    \
   SPECIALIZE_IMPL(double, VariadicElementwiseOpTag)
 

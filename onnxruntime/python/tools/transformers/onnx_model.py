@@ -5,8 +5,10 @@
 
 from typing import List, Tuple
 import logging
+import os
 import sys
 import argparse
+from pathlib import Path
 import numpy as np
 from collections import deque
 from onnx import ModelProto, TensorProto, numpy_helper, helper, external_data_helper, save_model
@@ -405,6 +407,12 @@ class OnnxModel:
     def convert_model_float32_to_float16(self, cast_input_output=True):
         """ Convert a graph to FLOAT16
         """
+        from packaging.version import Version
+        import onnxconverter_common.float16 as oc
+        if Version(oc.__version__) > Version("1.7.0"):
+            self.model = oc.convert_float_to_float16(self.model, keep_io_types=cast_input_output)
+            return
+
         graph = self.model.graph
         initializers = graph.initializer
 
@@ -628,7 +636,7 @@ class OnnxModel:
         weights_to_remove = []
         weights_to_keep = []
         for initializer in graph.initializer:
-            if initializer.name not in remaining_input_names:
+            if initializer.name not in remaining_input_names and not self.find_graph_output(initializer.name):
                 weights_to_remove.append(initializer)
             else:
                 weights_to_keep.append(initializer.name)
@@ -657,18 +665,25 @@ class OnnxModel:
                             return False
         return True
 
-    def save_model_to_file(self, output_path):
+    def save_model_to_file(self, output_path, use_external_data_format=False):
         logger.info(f"Output model to {output_path}")
 
-        if output_path.endswith(".json"):
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+
+        if output_path.endswith(".json"):  # Output text for testing small model.
             assert isinstance(self.model, ModelProto)
             with open(output_path, "w") as out:
                 out.write(str(self.model))
         else:
-            save_model(self.model, output_path, format=None)
-            #external_data_helper.convert_model_to_external_data(self.model, all_tensors_to_one_file=True, location = output_path + ".data")
-            #with open(output_path, "wb") as out:
-            #    out.write(self.model.SerializeToString())
+            # Save model to external data, which is needed for model size > 2GB
+            if use_external_data_format:
+                data_file = str(Path(output_path).name + ".data")
+                if os.path.isfile(data_file):
+                    os.remove(data_file)
+                external_data_helper.convert_model_to_external_data(self.model,
+                                                                    all_tensors_to_one_file=True,
+                                                                    location=data_file)
+            save_model(self.model, output_path)
 
     def get_graph_inputs_excluding_initializers(self):
         """

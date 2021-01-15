@@ -1,5 +1,3 @@
-
-
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
@@ -24,10 +22,11 @@ namespace test {
 
 template <typename T>
 void TestMatMulIntegerToFloat(const std::vector<int64_t>& A_dims,
-                                std::vector<int64_t> B_dims,
-                                const std::string& reference_model,
-                                bool has_zp = true,
-                                bool has_bias = false) {
+                              std::vector<int64_t> B_dims,
+                              const std::string& reference_model,
+                              bool is_matrix_b_constant,
+                              bool has_zp = true,
+                              bool has_bias = false) {
   // create rand inputs
   RandomValueGenerator random{};
 
@@ -53,7 +52,7 @@ void TestMatMulIntegerToFloat(const std::vector<int64_t>& A_dims,
 
   OpTester test("MatMulIntegerToFloat", 1, onnxruntime::kMSDomain);
   test.AddInput<uint8_t>("A", A_dims, A_data);
-  test.AddInput<T>("B", B_dims, B_data);
+  test.AddInput<T>("B", B_dims, B_data, is_matrix_b_constant);
   test.AddInput<float>("a_scale", {1}, A_scale);
   test.AddInput<float>("b_scale", {1}, B_scale);
 
@@ -72,27 +71,44 @@ void TestMatMulIntegerToFloat(const std::vector<int64_t>& A_dims,
   }
 
   test.AddReferenceOutputs(reference_model);
+  test.SetOutputRelErr("Y", 1e-4f);
   test.Run();
 }
 
 TEST(MatMulIntegerToFloat, Int8_test) {
-#ifdef MLAS_SUPPORTS_GEMM_U8X8
   std::vector<int64_t> A_dims{4, 128};
   std::vector<int64_t> B_dims{128, 128};
   std::vector<int64_t> Y_dims{4, 128};
 
-  TestMatMulIntegerToFloat<int8_t>(A_dims, B_dims, "testdata/matmul_integer_to_float_int8.onnx");
-#endif
+  TestMatMulIntegerToFloat<int8_t>(A_dims,
+                                   B_dims,
+                                   "testdata/matmul_integer_to_float_int8.onnx",
+                                   false /*is_matrix_b_constant*/);
+
+  TestMatMulIntegerToFloat<int8_t>(A_dims,
+                                   B_dims,
+                                   "testdata/matmul_integer_to_float_int8.onnx",
+                                   true /*is_matrix_b_constant*/);
 }
 
 TEST(MatMulIntegerToFloat, Int8_bias_test) {
-#ifdef MLAS_SUPPORTS_GEMM_U8X8
   std::vector<int64_t> A_dims{4, 128};
   std::vector<int64_t> B_dims{128, 128};
   std::vector<int64_t> Y_dims{4, 128};
 
-  TestMatMulIntegerToFloat<int8_t>(A_dims, B_dims, "testdata/matmul_integer_to_float_int8_bias.onnx", false, true);
-#endif
+  TestMatMulIntegerToFloat<int8_t>(A_dims,
+                                   B_dims,
+                                   "testdata/matmul_integer_to_float_int8_bias.onnx",
+                                   false /*is_matrix_b_constant*/,
+                                   false, /*has_zp*/
+                                   true /*has_bias*/);
+
+  TestMatMulIntegerToFloat<int8_t>(A_dims,
+                                   B_dims,
+                                   "testdata/matmul_integer_to_float_int8_bias.onnx",
+                                   true /*is_matrix_b_constant*/,
+                                   false, /*has_zp*/
+                                   true /*has_bias*/);
 }
 
 TEST(MatMulIntegerToFloat, UInt8_test) {
@@ -100,7 +116,15 @@ TEST(MatMulIntegerToFloat, UInt8_test) {
   std::vector<int64_t> B_dims{128, 128};
   std::vector<int64_t> Y_dims{4, 128};
 
-  TestMatMulIntegerToFloat<uint8_t>(A_dims, B_dims, "testdata/matmul_integer_to_float_uint8.onnx");
+  TestMatMulIntegerToFloat<uint8_t>(A_dims,
+                                    B_dims,
+                                    "testdata/matmul_integer_to_float_uint8.onnx",
+                                    false /*is_matrix_b_constant*/);
+
+  TestMatMulIntegerToFloat<uint8_t>(A_dims,
+                                    B_dims,
+                                    "testdata/matmul_integer_to_float_uint8.onnx",
+                                    true /*is_matrix_b_constant*/);
 }
 
 TEST(MatMulIntegerToFloat, UInt8_bias_test) {
@@ -108,7 +132,19 @@ TEST(MatMulIntegerToFloat, UInt8_bias_test) {
   std::vector<int64_t> B_dims{128, 128};
   std::vector<int64_t> Y_dims{4, 128};
 
-  TestMatMulIntegerToFloat<uint8_t>(A_dims, B_dims, "testdata/matmul_integer_to_float_uint8_bias.onnx", false, true);
+  TestMatMulIntegerToFloat<uint8_t>(A_dims,
+                                    B_dims,
+                                    "testdata/matmul_integer_to_float_uint8_bias.onnx",
+                                    false /*is_matrix_b_constant*/,
+                                    false, /*has_zp*/
+                                    true /*has_bias*/);
+
+  TestMatMulIntegerToFloat<uint8_t>(A_dims,
+                                    B_dims,
+                                    "testdata/matmul_integer_to_float_uint8_bias.onnx",
+                                    true /*is_matrix_b_constant*/,
+                                    false, /*has_zp*/
+                                    true /*has_bias*/);
 }
 
 }  // namespace test

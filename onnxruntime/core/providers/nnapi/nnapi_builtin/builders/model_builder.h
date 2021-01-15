@@ -8,6 +8,7 @@
 #include <core/graph/graph_viewer.h>
 #include "core/providers/nnapi/nnapi_builtin/model.h"
 #include "core/providers/nnapi/nnapi_builtin/nnapi_lib/NeuralNetworksWrapper.h"
+#include "op_support_checker.h"
 #include "shaper.h"
 
 namespace onnxruntime {
@@ -28,32 +29,31 @@ class ModelBuilder {
     CPU_ONLY,      // use CPU only
   };
 
-  ModelBuilder(const GraphViewer& graph_view);
+  ModelBuilder(const GraphViewer& graph_viewer);
   ~ModelBuilder() = default;
 
-  std::vector<std::vector<int>> GetSupportedNodes();
-
-  std::unique_ptr<Model> Compile();
+  Status Compile(std::unique_ptr<Model>& model) ORT_MUST_USE_RESULT;
 
   int32_t GetAndroidSdkVer() const;
 
   // Add an NNAPI operation (operator)
-  void AddOperation(int op, const std::vector<uint32_t>& input_indices,
-                    const std::vector<std::string>& output_names,
-                    const std::vector<android::nn::wrapper::OperandType>& types,
-                    const std::vector<bool>& is_nhwc_vec);
+  Status AddOperation(int op, const std::vector<uint32_t>& input_indices,
+                      const std::vector<std::string>& output_names,
+                      const std::vector<android::nn::wrapper::OperandType>& types,
+                      const std::vector<bool>& is_nhwc_vec) ORT_MUST_USE_RESULT;
 
   // Find if an output has a fuseable activation (Relu)
   int32_t FindActivation(const Node& node, const NodeArg& output);
 
   // Add an NNAPI scalar operand
-  uint32_t AddOperandFromScalar(bool value);
-  uint32_t AddOperandFromScalar(float value);
-  uint32_t AddOperandFromScalar(int32_t value);
+  Status AddOperandFromScalar(bool value, uint32_t& index) ORT_MUST_USE_RESULT;
+  Status AddOperandFromScalar(float value, uint32_t& index) ORT_MUST_USE_RESULT;
+  Status AddOperandFromScalar(int32_t value, uint32_t& index) ORT_MUST_USE_RESULT;
 
   // Add an NNAPI tensor operand (and allocate persist buffer)
-  uint32_t AddOperandFromPersistMemoryBuffer(const std::string& name, const void* buffer,
-                                             const android::nn::wrapper::OperandType& operand_type);
+  Status AddOperandFromPersistMemoryBuffer(
+      const std::string& name, const void* buffer,
+      const android::nn::wrapper::OperandType& operand_type) ORT_MUST_USE_RESULT;
 
   // The initializer will be processed separately, skip it as an initializer
   void AddInitializerToSkip(const std::string& tensor_name);
@@ -91,26 +91,25 @@ class ModelBuilder {
   const std::unordered_set<std::string>&
   GetFusedActivations() const { return fused_activations_; }
 
-  const std::unordered_map<std::string, const ONNX_NAMESPACE::TensorProto&>&
-  GetInitializerTensors() const { return initializers_; }
+  const InitializedTensorSet& GetInitializerTensors() const { return graph_viewer_.GetAllInitializedTensors(); }
 
-  const Graph& GetOnnxGraph() const { return graph_view_.GetGraph(); }
+  const GraphViewer& GetGraphViewer() const { return graph_viewer_; }
 
   void RegisterNHWCOperand(const std::string& name);
-  bool IsOperandNHWC(const std::string& name);
+  bool IsOperandNHWC(const std::string& name) const;
 
   // Get the operand transposed to nchw/nhwc from given nhwc/nchw operand, if it exists
   bool GetNCHWOperand(const std::string& nhwc_name, std::string& nchw_name);
   bool GetNHWCOperand(const std::string& nchw_name, std::string& nhwc_name);
 
-  void SetNHWCToNCHWOperandMap(const std::string& nhwc_name,
-                               const std::string& nchw_name);
-  void SetNCHWToNHWCOperandMap(const std::string& nchw_name,
-                               const std::string& nhwc_name);
+  Status SetNHWCToNCHWOperandMap(const std::string& nhwc_name,
+                                 const std::string& nchw_name) ORT_MUST_USE_RESULT;
+  Status SetNCHWToNHWCOperandMap(const std::string& nchw_name,
+                                 const std::string& nhwc_name) ORT_MUST_USE_RESULT;
 
  private:
   const NnApi* nnapi_{nullptr};
-  const GraphViewer& graph_view_;
+  const GraphViewer& graph_viewer_;
   std::unique_ptr<Model> nnapi_model_;
 
   uint32_t name_token_{0};
@@ -128,10 +127,12 @@ class ModelBuilder {
   std::unordered_set<std::string> operands_;
   std::unordered_set<std::string> fused_activations_;
 
-  std::unordered_map<std::string, const ONNX_NAMESPACE::TensorProto&> initializers_;
   std::unordered_set<std::string> skipped_initializers_;
 
-  std::unordered_map<std::string, std::shared_ptr<IOpBuilder>> op_builders_;
+  // All activation nodes (Relu, Relu1, Relu6) as a map <NodeIndex, activation_code>
+  std::unordered_map<NodeIndex, int32_t> activation_nodes_;
+
+  std::unordered_map<std::string, std::shared_ptr<IOpSupportChecker>> op_support_checkers_;
 
   // Operands in nhwc
   std::unordered_set<std::string> nhwc_operands_;
@@ -150,29 +151,33 @@ class ModelBuilder {
 
   uint32_t next_index_ = 0;
 
-  bool IsNodeSupported(const Node& node);
-
   // Convert the onnx model to ANeuralNetworksModel
-  void Prepare();
+  Status Prepare() ORT_MUST_USE_RESULT;
 
-  void GetTargetDevices();
-  void GetAllInitializers();
+  Status GetTargetDevices() ORT_MUST_USE_RESULT;
+
+  // If a NNAPI operation will use initializers directly, we will add the initializers to the skip list
   void PreprocessInitializers();
-  void RegisterInitializers();
-  void RegisterModelInputs();
-  void AddOperations();
-  void RegisterModelOutputs();
+  // Preprocess all the activation nodes (Relu/Relu1/Relu6) for easy query later
+  void PreprocessActivations();
+  // Copy and process all the initializers to NNAPI model
+  Status RegisterInitializers() ORT_MUST_USE_RESULT;
+  Status RegisterModelInputs() ORT_MUST_USE_RESULT;
+  Status AddOperations() ORT_MUST_USE_RESULT;
+  Status RegisterModelOutputs() ORT_MUST_USE_RESULT;
+  // After constructing the NNAPI model, will set the shape inferencing record to the Model
   void RegisterModelShaper();
 
-  void SetOperandValue(uint32_t index, Model::NNMemory* memory,
-                       size_t size, size_t offset);
+  Status SetOperandValue(uint32_t index, Model::NNMemory* memory,
+                         size_t size, size_t offset) ORT_MUST_USE_RESULT;
 
-  uint32_t AddNewNNAPIOperand(const android::nn::wrapper::OperandType& type);
-  uint32_t AddNewOperand(const std::string& name,
-                         const android::nn::wrapper::OperandType& operand_type,
-                         bool is_nhwc);
+  Status AddNewNNAPIOperand(const android::nn::wrapper::OperandType& type, uint32_t& index) ORT_MUST_USE_RESULT;
+  Status AddNewOperand(const std::string& name,
+                       const android::nn::wrapper::OperandType& operand_type,
+                       bool is_nhwc,
+                       uint32_t& index) ORT_MUST_USE_RESULT;
 
-  IOpBuilder* GetOpBuilder(const Node& node);
+  static const IOpBuilder* GetOpBuilder(const Node& node);
 };
 
 }  // namespace nnapi

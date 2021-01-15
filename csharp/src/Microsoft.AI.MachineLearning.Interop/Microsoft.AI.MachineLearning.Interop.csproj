@@ -2,7 +2,7 @@
 
   <PropertyGroup>
     <ProjectName>Microsoft.AI.MachineLearning.Interop</ProjectName>
-    <TargetFramework>netstandard2.0</TargetFramework>
+    <TargetFramework>net5.0-windows10.0.19041.0</TargetFramework>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     
     <Platform>Any CPU</Platform>
@@ -15,8 +15,8 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Microsoft.Windows.CsWinRT" Version="0.1.0-prerelease.200512.7" targetFramework="net46" />
-    <PackageReference Include="Microsoft.Windows.SDK.NET" Version="10.0.18362.3-preview" />
+    <PackageReference Include="Microsoft.Windows.CsWinRT" Version="1.0.1" targetFramework="net5.0-windows10.0.19041.0" />
+    <PackageReference Include="Microsoft.Windows.SDK.Contracts" Version="10.0.19041.1" targetFramework="net5.0-windows10.0.19041.0" />
   </ItemGroup>
 
   <ItemGroup>
@@ -25,7 +25,7 @@
 
   <Target Name="GenerateProjection" BeforeTargets="DispatchToInnerBuilds;Build;CoreCompile">
     <ConvertToAbsolutePath Paths="$(OnnxRuntimeBuildDirectory)">
-      <Output TaskParameter="AbsolutePaths" PropertyName="OnnxRuntimeBuildDirectoryAbs"/>
+      <Output TaskParameter="AbsolutePaths" PropertyName="OnnxRuntimeBuildDirectoryAbs" />
     </ConvertToAbsolutePath>
 
     <ItemGroup>
@@ -36,8 +36,8 @@
       <CsWinRTCommand>$(CsWinRTPath)cswinrt.exe -verbose -in local -in @(WindowsAIsWinMDs->'"%(FullPath)"', ' ') -out "$(ProjectDir)Generated Files" -include Microsoft.AI.MachineLearning</CsWinRTCommand>
     </PropertyGroup>
 
-    <Message Text="Generating $(ProjectName) CS projection sources with command:"/>
-    <Message Text="$(CsWinRTCommand)"/>
+    <Message Text="Generating $(ProjectName) CS projection sources with command:" />
+    <Message Text="$(CsWinRTCommand)" />
     <Exec Command="$(CsWinRTCommand)" />
     
     <ItemGroup>

@@ -296,7 +296,7 @@ TEST(PoolTest, MaxPool2D_uint8) {
     21, 22, 23, 24, 25});
 
   test.AddOutput<uint8_t>("Output", output_shape, output);
-#if defined(OPENVINO_CONFIG_GPU_FP32) || defined(OPENVINO_CONFIG_GPU_FP16)
+#if defined(OPENVINO_CONFIG_GPU_FP32) || defined(OPENVINO_CONFIG_GPU_FP16) || defined(OPENVINO_CONFIG_MYRIAD)
   test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kOpenVINOExecutionProvider});
 #else
   test.Run();
@@ -1264,6 +1264,25 @@ TEST(PoolTest, LpPool) {
   test.Run();
 }
 
+TEST(PoolTest, LpPoolWithNegativeNumbers) {
+  OpTester test("LpPool");
+
+  test.AddAttribute("p", static_cast<int64_t>(1));
+  test.AddAttribute("auto_pad", "");
+  test.AddAttribute("strides", std::vector<int64_t>{2});
+  test.AddAttribute("pads", vector<int64_t>{0, 0});
+  test.AddAttribute("kernel_shape", vector<int64_t>{2});
+
+  std::vector<float> x_vals = {0.2f, -0.6f};
+  std::vector<int64_t> x_dims = {1, 1, 2};
+  std::vector<int64_t> expected_dims = {1, 1, 1};
+  std::vector<float> expected_vals = {-0.4f};
+
+  test.AddInput<float>("X", x_dims, x_vals);
+  test.AddOutput<float>("Y", expected_dims, expected_vals);
+  test.Run();
+}
+
 TEST(PoolTest, GlobalLpPool) {
   OpTester test("GlobalLpPool");
   test.AddAttribute("p", static_cast<int64_t>(3));
@@ -1533,7 +1552,7 @@ TEST(PoolTest, MaxPoolDimWithZeroForN) {
 
   test.AddInput<float>("X", x_dims, x_vals);
   test.AddOutput<float>("Y", expected_dims, expected_vals);
-  test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider, kNGraphExecutionProvider});
+  test.Run(OpTester::ExpectResult::kExpectSuccess, "", {kTensorrtExecutionProvider});
 }
 
 }  // namespace test

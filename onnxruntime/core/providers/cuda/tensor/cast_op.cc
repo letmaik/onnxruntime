@@ -11,6 +11,9 @@ namespace cuda {
 
 const std::vector<MLDataType> castOpTypeConstraints{
     DataTypeImpl::GetTensorType<MLFloat16>(),
+#if defined(CUDA_VERSION) && CUDA_VERSION >= 11000
+    DataTypeImpl::GetTensorType<BFloat16>(),
+#endif
     DataTypeImpl::GetTensorType<float>(),
     DataTypeImpl::GetTensorType<double>(),
     DataTypeImpl::GetTensorType<int8_t>(),
@@ -34,10 +37,20 @@ const std::vector<MLDataType> castOpTypeConstraints{
           .TypeConstraint("T1", DataTypeImpl::GetTensorType<T>()) \
           .TypeConstraint("T2", castOpTypeConstraints),           \
       Cast<T>);                                                   \
+  ONNX_OPERATOR_VERSIONED_TYPED_KERNEL_EX(                        \
+      Cast,                                                       \
+      kOnnxDomain,                                                \
+      9, 12,                                                       \
+      T,                                                          \
+      kCudaExecutionProvider,                                     \
+      KernelDefBuilder()                                          \
+          .TypeConstraint("T1", DataTypeImpl::GetTensorType<T>()) \
+          .TypeConstraint("T2", castOpTypeConstraints),           \
+      Cast<T>);                                                   \
   ONNX_OPERATOR_TYPED_KERNEL_EX(                                  \
       Cast,                                                       \
       kOnnxDomain,                                                \
-      9,                                                          \
+      13,                                                          \
       T,                                                          \
       kCudaExecutionProvider,                                     \
       KernelDefBuilder()                                          \
@@ -50,7 +63,7 @@ Status Cast<SrcT>::ComputeInternal(OpKernelContext* context) const {
   typedef typename ToCudaType<SrcT>::MappedType CudaSrcT;
   const Tensor* X = context->Input<Tensor>(0);
   const TensorShape& shape = X->Shape();
-  Tensor* Y = context->Output(0, TensorShape(shape));
+  Tensor* Y = context->Output(0, shape);
   const auto* x_data = reinterpret_cast<const CudaSrcT*>(X->template Data<SrcT>());
   size_t count = shape.Size();
 
@@ -66,6 +79,9 @@ Status Cast<SrcT>::ComputeInternal(OpKernelContext* context) const {
 
   switch (to_) {
     CASE(TensorProto_DataType_FLOAT16, MLFloat16)
+#if defined(CUDA_VERSION) && CUDA_VERSION >= 11000
+    CASE(TensorProto_DataType_BFLOAT16, BFloat16)
+#endif
     CASE(TensorProto_DataType_FLOAT, float)
     CASE(TensorProto_DataType_DOUBLE, double)
     CASE(TensorProto_DataType_INT8, int8_t)
@@ -103,6 +119,9 @@ SPECIALIZE_IMPL(uint16_t)
 SPECIALIZE_IMPL(uint32_t)
 SPECIALIZE_IMPL(uint64_t)
 SPECIALIZE_IMPL(bool)
+#if defined(CUDA_VERSION) && CUDA_VERSION >= 11000
+SPECIALIZE_IMPL(BFloat16)
+#endif
 
 }  // namespace cuda
 }  // namespace onnxruntime

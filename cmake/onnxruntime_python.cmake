@@ -67,6 +67,9 @@ if (MSVC AND NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     target_compile_options(onnxruntime_pybind11_state PRIVATE "/wd4244")
 endif()
 target_include_directories(onnxruntime_pybind11_state PRIVATE ${ONNXRUNTIME_ROOT} ${PYTHON_INCLUDE_DIR} ${NUMPY_INCLUDE_DIR} ${pybind11_INCLUDE_DIRS})
+if(onnxruntime_USE_CUDA)
+    target_include_directories(onnxruntime_pybind11_state PRIVATE ${onnxruntime_CUDNN_HOME}/include)
+endif()
 if (onnxruntime_ENABLE_TRAINING)
   target_include_directories(onnxruntime_pybind11_state PRIVATE ${ORTTRAINING_ROOT})
 endif()
@@ -83,11 +86,7 @@ set(onnxruntime_pybind11_state_libs
     onnxruntime_session
     ${onnxruntime_libs}
     ${PROVIDERS_CUDA}
-    ${PROVIDERS_DNNL}
-    ${PROVIDERS_TENSORRT}
     ${PROVIDERS_MIGRAPHX}
-    ${PROVIDERS_NGRAPH}
-    ${PROVIDERS_OPENVINO}
     ${PROVIDERS_NUPHAR}
     ${PROVIDERS_VITISAI}
     ${PROVIDERS_NNAPI}
@@ -95,6 +94,7 @@ set(onnxruntime_pybind11_state_libs
     ${PROVIDERS_DML}
     ${PROVIDERS_ACL}
     ${PROVIDERS_ARMNN}
+    ${PROVIDERS_ROCM}
     onnxruntime_optimizer
     onnxruntime_providers
     onnxruntime_util
@@ -104,6 +104,7 @@ set(onnxruntime_pybind11_state_libs
     onnxruntime_graph
     onnxruntime_common
     onnxruntime_mlas
+    onnxruntime_flatbuffers
     ${pybind11_lib}
 )
 
@@ -144,6 +145,7 @@ set_target_properties(onnxruntime_pybind11_state PROPERTIES FOLDER "ONNXRuntime"
 if(onnxruntime_ENABLE_LTO)
   set_target_properties(onnxruntime_pybind11_state PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELEASE TRUE)
   set_target_properties(onnxruntime_pybind11_state PROPERTIES INTERPROCEDURAL_OPTIMIZATION_RELWITHDEBINFO TRUE)
+  set_target_properties(onnxruntime_pybind11_state PROPERTIES INTERPROCEDURAL_OPTIMIZATION_MINSIZEREL TRUE)
 endif()
 if (MSVC)
   set_target_properties(onnxruntime_pybind11_state PROPERTIES SUFFIX ".pyd")
@@ -168,7 +170,19 @@ endif()
 
 if (onnxruntime_ENABLE_TRAINING)
   file(GLOB onnxruntime_python_capi_training_srcs CONFIGURE_DEPENDS
+    "${ORTTRAINING_SOURCE_DIR}/python/deprecated/*.py"
+  )
+  file(GLOB onnxruntime_python_root_srcs CONFIGURE_DEPENDS
     "${ORTTRAINING_SOURCE_DIR}/python/training/*.py"
+  )
+  file(GLOB onnxruntime_python_amp_srcs CONFIGURE_DEPENDS
+    "${ORTTRAINING_SOURCE_DIR}/python/training/amp/*.py"
+  )
+  file(GLOB onnxruntime_python_optim_srcs CONFIGURE_DEPENDS
+    "${ORTTRAINING_SOURCE_DIR}/python/training/optim/*.py"
+  )
+  file(GLOB onnxruntime_python_train_tools_srcs CONFIGURE_DEPENDS
+    "${REPO_ROOT}/tools/python/register_custom_ops_pytorch_exporter.py"
   )
 else()
   file(GLOB onnxruntime_python_capi_training_srcs CONFIGURE_DEPENDS
@@ -180,6 +194,12 @@ file(GLOB onnxruntime_python_test_srcs CONFIGURE_DEPENDS
     "${ONNXRUNTIME_ROOT}/test/python/*.py"
     "${ORTTRAINING_SOURCE_DIR}/test/python/*.py"
 )
+file(GLOB onnxruntime_python_checkpoint_test_srcs CONFIGURE_DEPENDS
+    "${ORTTRAINING_SOURCE_DIR}/test/python/checkpoint/*.py"
+)
+file(GLOB onnxruntime_python_dhp_parallel_test_srcs CONFIGURE_DEPENDS
+    "${ORTTRAINING_SOURCE_DIR}/test/python/dhp_parallel/*.py"
+)
 file(GLOB onnxruntime_python_tools_srcs CONFIGURE_DEPENDS
     "${ONNXRUNTIME_ROOT}/python/tools/*.py"
 )
@@ -189,8 +209,15 @@ file(GLOB onnxruntime_python_tools_featurizers_src CONFIGURE_DEPENDS
 file(GLOB onnxruntime_python_quantization_src CONFIGURE_DEPENDS
     "${ONNXRUNTIME_ROOT}/python/tools/quantization/*.py"
 )
-list(REMOVE_ITEM onnxruntime_python_quantization_src
-  "${ONNXRUNTIME_ROOT}/python/tools/quantization/test_calibrate.py")
+file(GLOB onnxruntime_python_quantization_operators_src CONFIGURE_DEPENDS
+    "${ONNXRUNTIME_ROOT}/python/tools/quantization/operators/*.py"
+)
+file(GLOB onnxruntime_python_transformers_src CONFIGURE_DEPENDS
+    "${ONNXRUNTIME_ROOT}/python/tools/transformers/*.py"
+)
+file(GLOB onnxruntime_python_transformers_longformer_src CONFIGURE_DEPENDS
+    "${ONNXRUNTIME_ROOT}/python/tools/transformers/longformer/*.py"
+)
 file(GLOB onnxruntime_python_datasets_srcs CONFIGURE_DEPENDS
     "${ONNXRUNTIME_ROOT}/python/datasets/*.py"
 )
@@ -209,7 +236,12 @@ add_custom_command(
   COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/datasets
   COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/tools
   COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/tools/featurizer_ops
+  COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/transformers
+  COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/transformers/longformer
   COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/quantization
+  COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/quantization/operators
+  COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${test_data_target}>/checkpoint
+  COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${test_data_target}>/dhp_parallel
   COMMAND ${CMAKE_COMMAND} -E copy
       ${ONNXRUNTIME_ROOT}/__init__.py
       $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/
@@ -225,6 +257,12 @@ add_custom_command(
   COMMAND ${CMAKE_COMMAND} -E copy
       ${onnxruntime_python_test_srcs}
       $<TARGET_FILE_DIR:${test_data_target}>
+  COMMAND ${CMAKE_COMMAND} -E copy
+      ${onnxruntime_python_checkpoint_test_srcs}
+      $<TARGET_FILE_DIR:${test_data_target}>/checkpoint/
+  COMMAND ${CMAKE_COMMAND} -E copy
+      ${onnxruntime_python_dhp_parallel_test_srcs}
+      $<TARGET_FILE_DIR:${test_data_target}>/dhp_parallel/
   COMMAND ${CMAKE_COMMAND} -E copy
       ${onnxruntime_backend_srcs}
       $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/backend/
@@ -253,35 +291,62 @@ add_custom_command(
       ${onnxruntime_python_quantization_src}
       $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/quantization/
   COMMAND ${CMAKE_COMMAND} -E copy
+      ${onnxruntime_python_quantization_operators_src}
+      $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/quantization/operators/
+  COMMAND ${CMAKE_COMMAND} -E copy
+      ${onnxruntime_python_transformers_src}
+      $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/transformers/
+  COMMAND ${CMAKE_COMMAND} -E copy
+      ${onnxruntime_python_transformers_longformer_src}
+      $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/transformers/longformer/
+  COMMAND ${CMAKE_COMMAND} -E copy
       ${REPO_ROOT}/VERSION_NUMBER
       $<TARGET_FILE_DIR:${test_data_target}>
 )
+
+if (onnxruntime_ENABLE_TRAINING)
+  add_custom_command(
+    TARGET onnxruntime_pybind11_state POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/training
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/training/amp
+    COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/training/optim
+    COMMAND ${CMAKE_COMMAND} -E copy
+        ${onnxruntime_python_capi_training_srcs}
+        $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/capi/training/
+    COMMAND ${CMAKE_COMMAND} -E copy
+        ${onnxruntime_python_root_srcs}
+        $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/training/
+    COMMAND ${CMAKE_COMMAND} -E copy
+        ${onnxruntime_python_amp_srcs}
+        $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/training/amp/
+    COMMAND ${CMAKE_COMMAND} -E copy
+        ${onnxruntime_python_optim_srcs}
+        $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/training/optim/
+    COMMAND ${CMAKE_COMMAND} -E copy
+        ${onnxruntime_python_train_tools_srcs}
+        $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/training/
+  )
+endif()
 
 if (onnxruntime_USE_DNNL)
   add_custom_command(
     TARGET onnxruntime_pybind11_state POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy
         ${DNNL_DLL_PATH} $<TARGET_FILE:onnxruntime_providers_dnnl>
+        $<TARGET_FILE:onnxruntime_providers_shared>
         $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/capi/
   )
 endif()
 
-if (onnxruntime_USE_NGRAPH)
+if (onnxruntime_USE_TENSORRT)
   add_custom_command(
     TARGET onnxruntime_pybind11_state POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy
-        ${ngraph_LIBRARIES}/${NGRAPH_SHARED_LIB}
-		${ngraph_LIBRARIES}/${NGRAPH_CODEGEN_SHARED_LIB}
-		${ngraph_LIBRARIES}/${NGRAPH_CPU_BACKEND_SHARED_LIB}
-		${ngraph_LIBRARIES}/${NGRAPH_IOMP5MD_SHARED_LIB}
-		${ngraph_LIBRARIES}/${NGRAPH_MKLDNN_SHARED_LIB}
-		${ngraph_LIBRARIES}/${NGRAPH_MKLML_SHARED_LIB}
-		${ngraph_LIBRARIES}/${NGRAPH_TBB_SHARED_LIB}
-		${ngraph_LIBRARIES}/${NGRAPH_TBB_SHARED_LIB_2}
+        $<TARGET_FILE:onnxruntime_providers_tensorrt>
+        $<TARGET_FILE:onnxruntime_providers_shared>
         $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/capi/
   )
 endif()
-
 
 if (onnxruntime_USE_OPENVINO)
   if(NOT WIN32)
@@ -289,6 +354,8 @@ if (onnxruntime_USE_OPENVINO)
       TARGET onnxruntime_pybind11_state POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E copy
           ${ngraph_LIBRARIES}/${NGRAPH_SHARED_LIB}
+          ${OPENVINO_DLL_PATH} $<TARGET_FILE:onnxruntime_providers_openvino>
+          $<TARGET_FILE:onnxruntime_providers_shared>
           $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/capi/
     )
   endif()
@@ -299,15 +366,6 @@ if (onnxruntime_USE_TVM)
     TARGET onnxruntime_pybind11_state POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy
         $<TARGET_FILE:tvm> $<TARGET_FILE:nnvm_compiler>
-        $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/capi/
-  )
-endif()
-
-if (onnxruntime_USE_MKLML)
-  add_custom_command(
-    TARGET onnxruntime_pybind11_state POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy
-        ${MKLML_LIB_DIR}/${MKLML_SHARED_LIB} ${MKLML_LIB_DIR}/${IOMP5MD_SHARED_LIB}
         $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/capi/
   )
 endif()
@@ -325,12 +383,24 @@ if (onnxruntime_USE_NUPHAR)
   )
 endif()
 
-if (onnxruntime_ENABLE_LANGUAGE_INTEROP_OPS)
-  include(onnxruntime_language_interop_ops.cmake)
+if (onnxruntime_USE_DML)
   add_custom_command(
     TARGET onnxruntime_pybind11_state POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy
-      $<TARGET_FILE:onnxruntime_pywrapper>
-      $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/capi/
+        ${DML_PACKAGE_DIR}/bin/${onnxruntime_target_platform}-win/${DML_SHARED_LIB}
+        $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/capi/
   )
+endif()
+
+if (onnxruntime_USE_NNAPI_BUILTIN)
+  add_custom_command(
+    TARGET onnxruntime_pybind11_state POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy
+        $<TARGET_FILE:onnxruntime_providers_nnapi>
+        $<TARGET_FILE_DIR:${test_data_target}>/onnxruntime/capi/
+  )
+endif()
+
+if (onnxruntime_ENABLE_LANGUAGE_INTEROP_OPS)
+  include(onnxruntime_language_interop_ops.cmake)
 endif()

@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "matmul.h"
+#include "core/providers/cuda/math/matmul.h"
 #include "core/providers/cpu/math/matmul_helper.h"
 #include "core/providers/cuda/shared_inc/fpgeneric.h"
 #include "core/providers/cuda/cuda_allocator.h"
@@ -19,10 +19,19 @@ namespace cuda {
       KernelDefBuilder()                                          \
           .TypeConstraint("T", DataTypeImpl::GetTensorType<T>()), \
       MatMul<T>);                                                 \
+  ONNX_OPERATOR_VERSIONED_TYPED_KERNEL_EX(                        \
+      MatMul,                                                     \
+      kOnnxDomain,                                                \
+      9, 12,                                                       \
+      T,                                                          \
+      kCudaExecutionProvider,                                     \
+      KernelDefBuilder()                                          \
+          .TypeConstraint("T", DataTypeImpl::GetTensorType<T>()), \
+      MatMul<T>);                                                 \
   ONNX_OPERATOR_TYPED_KERNEL_EX(                                  \
       MatMul,                                                     \
       kOnnxDomain,                                                \
-      9,                                                          \
+      13,                                                          \
       T,                                                          \
       kCudaExecutionProvider,                                     \
       KernelDefBuilder()                                          \
@@ -32,6 +41,9 @@ namespace cuda {
 REGISTER_KERNEL_TYPED(float)
 REGISTER_KERNEL_TYPED(double)
 REGISTER_KERNEL_TYPED(MLFloat16)
+#if defined(CUDA_VERSION) && CUDA_VERSION >= 11000
+REGISTER_KERNEL_TYPED(BFloat16)
+#endif
 
 // StridedBatchedGemm can be used for the following GEMM computation
 // C[pnm] = A[pnk]*B[km] or C[pnm] = A[pnk]*B[pkm]
@@ -92,8 +104,12 @@ Status MatMul<T>::ComputeInternal(OpKernelContext* ctx) const {
 
   Tensor* Y = ctx->Output(0, helper.OutputShape());
 
-  CudaT one = ToCudaType<T>::FromFloat(1.0f);
-  CudaT zero = ToCudaType<T>::FromFloat(0.0f);
+  // Bail out early if the output is going to be empty
+  if (Y->Shape().Size() == 0)
+    return Status::OK();
+
+  const CudaT alpha = ToCudaType<T>::FromFloat(alpha_);
+  const CudaT zero = ToCudaType<T>::FromFloat(0.0f);
 
   cublasOperation_t transA = transa ? CUBLAS_OP_T : CUBLAS_OP_N;
   cublasOperation_t transB = transb ? CUBLAS_OP_T : CUBLAS_OP_N;
@@ -110,7 +126,7 @@ Status MatMul<T>::ComputeInternal(OpKernelContext* ctx) const {
         static_cast<int>(helper.N()),
         static_cast<int>(helper.M()),
         static_cast<int>(helper.K()),
-        &one,
+        &alpha,
         reinterpret_cast<const CudaT*>(right_X->template Data<T>()),
         ldb,
         reinterpret_cast<const CudaT*>(left_X->template Data<T>()),
@@ -128,7 +144,7 @@ Status MatMul<T>::ComputeInternal(OpKernelContext* ctx) const {
                                                           static_cast<int>(helper.N()),
                                                           static_cast<int>(helper.M()),
                                                           static_cast<int>(helper.K()),
-                                                          &one,
+                                                          &alpha,
                                                           reinterpret_cast<const CudaT*>(right_X->template Data<T>()),
                                                           ldb,
                                                           stride_B,
@@ -139,7 +155,8 @@ Status MatMul<T>::ComputeInternal(OpKernelContext* ctx) const {
                                                           reinterpret_cast<CudaT*>(Y->template MutableData<T>()),
                                                           ldc,
                                                           stride_C,
-                                                          static_cast<int>(batch_count)));
+                                                          static_cast<int>(batch_count),
+                                                          device_prop));
 
     return Status::OK();
   }
@@ -163,7 +180,7 @@ Status MatMul<T>::ComputeInternal(OpKernelContext* ctx) const {
       static_cast<int>(helper.N()),
       static_cast<int>(helper.M()),
       static_cast<int>(helper.K()),
-      &one,
+      &alpha,
       right_arrays.GpuPtr(),
       ldb,
       left_arrays.GpuPtr(),
@@ -171,7 +188,8 @@ Status MatMul<T>::ComputeInternal(OpKernelContext* ctx) const {
       &zero,
       output_arrays.GpuPtr(),
       ldc,
-      static_cast<int>(helper.OutputOffsets().size())));
+      static_cast<int>(helper.OutputOffsets().size()),
+      device_prop));
 
   return Status::OK();
 }

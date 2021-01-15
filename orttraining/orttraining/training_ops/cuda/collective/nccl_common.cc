@@ -1,8 +1,11 @@
 // Copyright (c) Microsoft Corporation. All rights reserved.
 // Licensed under the MIT License.
 
-#include "nccl_common.h"
+#include "orttraining/training_ops/cuda/collective/nccl_common.h"
+#include "core/common/logging/logging.h"
+#include "orttraining/core/framework/communication/mpi/mpi_context.h"
 #include <mpi.h>
+
 
 namespace onnxruntime {
 namespace cuda {
@@ -27,41 +30,38 @@ ncclDataType_t GetNcclDataType(onnxruntime::MLDataType type) {
   }
 }
 
+#ifdef USE_MPI
 static Status CreateNcclCommunicator(MPI_Group* mpi_world_group,
                                      const training::WorkerGroupType worker_group_type,
                                      ncclComm_t* group_comm) {
   auto worker_group = training::DistributedRunContext::GetInstance().GetWorkerGroup(worker_group_type);
-  if (worker_group.ranks.size() == 1) {
-    LOGS_DEFAULT(WARNING) << "Target group size = 1, skip creating nccl communicator. Group info: "
-                          << worker_group.ToString();
-    return Status::OK();
-  }
 
   // Create new group
   MPI_Group mpi_group;
-  MPI_Group_incl(*mpi_world_group, worker_group.ranks.size(), worker_group.ranks.data(), &mpi_group);
-
+  MPI_CHECK(MPI_Group_incl(*mpi_world_group, worker_group.ranks.size(), worker_group.ranks.data(), &mpi_group));
   // Create new MPI communicator
   MPI_Comm mpi_comm;
   static int32_t mpi_group_id = 0;
-  MPI_Comm_create_group(MPI_COMM_WORLD, mpi_group, ++mpi_group_id, &(mpi_comm));
+  MPI_CHECK(MPI_Comm_create_group(MPI_COMM_WORLD, mpi_group, ++mpi_group_id, &(mpi_comm)));
   ORT_ENFORCE(mpi_comm != MPI_COMM_NULL, "MPI communicator creation failed.");
 
   // Create new NCCL communicator
   ncclUniqueId nccl_id;
   if (worker_group.rank_in_group == 0) {
-    ncclGetUniqueId(&nccl_id);
+    NCCL_RETURN_IF_ERROR(ncclGetUniqueId(&nccl_id));
   }
-  MPI_Bcast(&nccl_id, sizeof(nccl_id), MPI_BYTE, 0, mpi_comm);
-  ncclCommInitRank(group_comm, worker_group.ranks.size(), nccl_id, worker_group.rank_in_group);
+  MPI_CHECK(MPI_Bcast(&nccl_id, sizeof(nccl_id), MPI_BYTE, 0, mpi_comm));
+  NCCL_RETURN_IF_ERROR(ncclCommInitRank(group_comm, worker_group.ranks.size(), nccl_id, worker_group.rank_in_group));
 
   // Clean up
-  MPI_Group_free(&mpi_group);
-  MPI_Comm_free(&mpi_comm);
+  MPI_CHECK(MPI_Group_free(&mpi_group));
+  MPI_CHECK(MPI_Comm_free(&mpi_comm));
   return Status::OK();
 }
+#endif
 
 NcclContext::NcclContext() {
+#ifdef USE_MPI
   int is_mpi_initialized = 0;
   MPI_Initialized(&is_mpi_initialized);
   if (!is_mpi_initialized) {
@@ -73,8 +73,13 @@ NcclContext::NcclContext() {
   MPI_Group mpi_world_group;
   MPI_Comm_group(MPI_COMM_WORLD, &mpi_world_group);
 
+  // Initialize global Parallel Group NCCL Communicator
+  auto ret = CreateNcclCommunicator(&mpi_world_group, training::WorkerGroupType::GlobalParallel,
+                                    &global_group_comm_);
+  ORT_ENFORCE(ret.IsOK());
+
   // Initialize Data Parallel Group NCCL Communicator
-  auto ret = CreateNcclCommunicator(&mpi_world_group, training::WorkerGroupType::DataParallel,
+  ret = CreateNcclCommunicator(&mpi_world_group, training::WorkerGroupType::DataParallel,
                                     &data_group_comm_);
   ORT_ENFORCE(ret.IsOK());
 
@@ -83,14 +88,35 @@ NcclContext::NcclContext() {
                                &horizontal_group_comm_);
   ORT_ENFORCE(ret.IsOK());
 
+  // Initialize node local Parallel Group NCCL Communicator
+  ret = CreateNcclCommunicator(&mpi_world_group, training::WorkerGroupType::NodeLocalDataParallel,
+                               &node_local_comm_);
+  ORT_ENFORCE(ret.IsOK());
+
+  // Initialize cross node Parallel Group NCCL Communicator
+  ret = CreateNcclCommunicator(&mpi_world_group, training::WorkerGroupType::CrossNodeDataParallel,
+                               &cross_node_comm_);
+  ORT_ENFORCE(ret.IsOK());
+
   MPI_Group_free(&mpi_world_group);
+#else
+  ORT_THROW("ORT must be built with MPI to use NCCL.");
+#endif
 }
 
 ncclComm_t NcclContext::Comm(training::WorkerGroupType group_type) {
-  if (training::WorkerGroupType::DataParallel == group_type) {
+  if (training::WorkerGroupType::GlobalParallel == group_type) {
+    return global_group_comm_;
+  } else if (training::WorkerGroupType::DataParallel == group_type) {
     return data_group_comm_;
   } else if (training::WorkerGroupType::HorizontalParallel == group_type) {
     return horizontal_group_comm_;
+  }
+  else if (training::WorkerGroupType::NodeLocalDataParallel == group_type) {
+    return node_local_comm_;
+  }
+  else if (training::WorkerGroupType::CrossNodeDataParallel == group_type) {
+    return cross_node_comm_;
   }
 
   return nullptr;
@@ -105,11 +131,21 @@ NcclContext::~NcclContext() {
     ncclCommDestroy(horizontal_group_comm_);
   }
 
+  if (node_local_comm_ != nullptr) {
+    ncclCommDestroy(node_local_comm_);
+  }
+
+  if (cross_node_comm_ != nullptr) {
+    ncclCommDestroy(cross_node_comm_);
+  }
+
+#ifdef USE_MPI
   int is_mpi_finalized = 0;
   MPI_Finalized(&is_mpi_finalized);
   if (!is_mpi_finalized) {
     MPI_Finalize();
   }
+#endif
 }
 
 NcclKernel::NcclKernel(const OpKernelInfo& info) : CudaKernel(info) {

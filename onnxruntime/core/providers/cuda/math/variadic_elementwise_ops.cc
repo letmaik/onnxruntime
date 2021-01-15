@@ -69,7 +69,7 @@ Status VariadicElementwiseOp<VariadicElementwiseOpTag, SupportedElementTypes...>
 
   using CudaT = typename ToCudaType<T>::MappedType;
 
-  CUDA_RETURN_IF_ERROR(cudaMemset(output.MutableDataRaw(), 0, output.SizeInBytes()));
+  CUDA_RETURN_IF_ERROR(cudaMemsetAsync(output.MutableDataRaw(), 0, output.SizeInBytes()));
 
   BinaryElementwisePreparation prepare;
   ORT_RETURN_IF_ERROR(BinaryElementwiseBroadcastPrepare(&output, &inputs[0].get(), &output, &prepare));
@@ -194,22 +194,28 @@ Status VariadicElementwiseOp<VariadicElementwiseOpTag, SupportedElementTypes...>
 
 namespace {
 
+#if defined(CUDA_VERSION) && CUDA_VERSION >= 11000
+#define ALL_IEEE_FLOAT_DATA_TYPES MLFloat16, float, double, BFloat16
+#else
+#define ALL_IEEE_FLOAT_DATA_TYPES MLFloat16, float, double
+#endif
+
 using SumOp = VariadicElementwiseOp<
     variadic_elementwise_ops::Sum,
-    MLFloat16, float, double>;
+    ALL_IEEE_FLOAT_DATA_TYPES>;
 
 using MinOp = VariadicElementwiseOp<
     variadic_elementwise_ops::Min,
-    uint32_t, uint64_t, int32_t, int64_t, MLFloat16, float, double>;
+    uint32_t, uint64_t, int32_t, int64_t, ALL_IEEE_FLOAT_DATA_TYPES>;
 
 using MaxOp = VariadicElementwiseOp<
     variadic_elementwise_ops::Max,
-    uint32_t, uint64_t, int32_t, int64_t, MLFloat16, float, double>;
+    uint32_t, uint64_t, int32_t, int64_t, ALL_IEEE_FLOAT_DATA_TYPES>;
 
 const auto k_uzilhfd_datatypes =
-    BuildKernelDefConstraints<uint32_t, uint64_t, int32_t, int64_t, MLFloat16, float, double>();
+    BuildKernelDefConstraints<uint32_t, uint64_t, int32_t, int64_t, ALL_IEEE_FLOAT_DATA_TYPES>();
 const auto k_hfd_datatypes =
-    BuildKernelDefConstraints<MLFloat16, float, double>();
+    BuildKernelDefConstraints<ALL_IEEE_FLOAT_DATA_TYPES>();
 
 }  // namespace
 
@@ -233,13 +239,16 @@ const auto k_hfd_datatypes =
       KernelDefBuilder().TypeConstraint("T", datatypes),                                   \
       impl_class)
 
-REGISTER_KERNEL(Sum, SumOp, 8, k_hfd_datatypes)
+REGISTER_KERNEL(Sum, SumOp, 13, k_hfd_datatypes)
+REGISTER_VERSIONED_KERNEL(Sum, SumOp, 8, 12, k_hfd_datatypes)
 REGISTER_VERSIONED_KERNEL(Sum, SumOp, 6, 7, k_hfd_datatypes)
 
-REGISTER_KERNEL(Min, MinOp, 12, k_uzilhfd_datatypes)
+REGISTER_KERNEL(Min, MinOp, 13, k_uzilhfd_datatypes)
+REGISTER_VERSIONED_KERNEL(Min, MinOp, 12, 12, k_uzilhfd_datatypes)
 REGISTER_VERSIONED_KERNEL(Min, MinOp, 6, 11, k_hfd_datatypes)
 
-REGISTER_KERNEL(Max, MaxOp, 12, k_uzilhfd_datatypes)
+REGISTER_KERNEL(Max, MaxOp, 13, k_uzilhfd_datatypes)
+REGISTER_VERSIONED_KERNEL(Max, MaxOp, 12, 12, k_uzilhfd_datatypes)
 REGISTER_VERSIONED_KERNEL(Max, MaxOp, 6, 11, k_hfd_datatypes)
 
 #undef REGISTER_VERSIONED_KERNEL

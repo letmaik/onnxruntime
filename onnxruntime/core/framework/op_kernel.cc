@@ -25,9 +25,25 @@ Tensor* OpKernelContext::Output(int index, const TensorShape& shape) {
   return p_ml_value ? p_ml_value->GetMutable<Tensor>() : nullptr;
 }
 
+Tensor* OpKernelContext::Output(int index, const std::vector<int64_t>& shape) {
+  return Output(index, TensorShape(shape));
+}
+
+Tensor* OpKernelContext::Output(int index, const std::initializer_list<int64_t>& shape) {
+  return Output(index, TensorShape(shape));
+}
+
 SparseTensor* OpKernelContext::Output(int index, size_t nnz, const TensorShape& shape) {
   auto p_ml_value = OutputMLValue(index, shape, nnz);
   return p_ml_value ? p_ml_value->GetMutable<SparseTensor>() : nullptr;
+}
+
+bool OpKernelContext::TryGetInferredInputShape(int index, TensorShape& shape) const {
+  return execution_frame_->TryGetInferredShape(GetInputArgIndex(index), shape);
+}
+
+bool OpKernelContext::TryGetInferredOutputShape(int index, TensorShape& shape) const {
+  return execution_frame_->TryGetInferredShape(GetOutputArgIndex(index), shape);
 }
 
 OrtValue* OpKernelContext::OutputMLValue(int index, const TensorShape& shape, size_t nnz) {
@@ -123,8 +139,16 @@ onnxruntime::NodeIndex OpKernelContext::GetNodeIndex() const {
   return kernel_->Node().Index();
 }
 
+const std::string& OpKernelContext::GetNodeName() const {
+  return kernel_->Node().Name();
+}
+
 const std::string& OpKernelContext::GetOpDomain() const {
   return kernel_->KernelDef().Domain();
+}
+
+const std::string& OpKernelContext::GetOpType() const {
+  return kernel_->Node().OpType();
 }
 
 const OrtValue* OpKernelContext::GetInputMLValue(int index) const {
