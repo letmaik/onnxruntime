@@ -15,5 +15,6 @@ target_link_libraries(onnxruntime_openenclave INTERFACE
     onnxruntime_graph
     onnxruntime_common
     onnxruntime_mlas
+    onnxruntime_flatbuffers
     ${onnxruntime_EXTERNAL_LIBRARIES}
     )

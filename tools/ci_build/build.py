@@ -976,8 +976,8 @@ def generate_build_tree(cmake_path, source_dir, build_dir, cuda_home, cudnn_home
                  args.use_openvino and not
                  args.enable_msvc_static_runtime
                  else "OFF"),
-                 "-Donnxruntime_OPENENCLAVE_ENCLAVE_BUILD_DIR=" + os.path.abspath(enclave_config_build_dir),
-                 "-DCMAKE_BUILD_TYPE={}".format(config)],
+                "-Donnxruntime_OPENENCLAVE_ENCLAVE_BUILD_DIR=" + os.path.abspath(enclave_config_build_dir),
+                "-DCMAKE_BUILD_TYPE={}".format(config)],
             cwd=config_build_dir)
 
 
@@ -1849,10 +1849,11 @@ def main():
             args.test = True
             _main(args, oe_phase='host')
 
+
 def _main(args, oe_phase=None, oe_enclave_build_dir=None):
     cross_compiling = args.arm or args.arm64 or args.android
     cmake_extra_defines = (args.cmake_extra_defines
-                        if args.cmake_extra_defines else [])
+                           if args.cmake_extra_defines else [])
 
     if args.include_ops_by_model or args.include_ops_by_config:
         from exclude_unused_ops import exclude_unused_ops

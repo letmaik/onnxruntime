@@ -10,11 +10,8 @@ set(COMPILER_RT_DEFAULT_TARGET_TRIPLE x86_64-pc-linux-unknown CACHE STRING "" FO
 add_subdirectory(${PROJECT_SOURCE_DIR}/external/compiler-rt EXCLUDE_FROM_ALL)
 add_library(compiler-rt-builtins ALIAS clang_rt.builtins-x86_64)
 
-# Due to an Open Enclave bug, calling find_package twice would fail,
-# which is bad if this project is consumed elsewhere.
-# TODO remove once https://github.com/Microsoft/openenclave/issues/1730 is fixed
 if (NOT TARGET openenclave::oeedger8r)
-    find_package(openenclave 0.6 REQUIRED CONFIG)
+    find_package(openenclave REQUIRED CONFIG)
     message(STATUS "Using Open Enclave ${openenclave_VERSION} from ${openenclave_CONFIG}")
 endif()
 
@@ -42,8 +39,11 @@ if (NOT ONNXRUNTIME_ERR STREQUAL "")
 endif()
 
 # Works around https://gitlab.kitware.com/cmake/cmake/issues/19227#note_570839.
-get_filename_component(dir_name ${ONNXRUNTIME_C_COMPILER_INC} NAME)
-set(ONNXRUNTIME_C_COMPILER_INC ${ONNXRUNTIME_C_COMPILER_INC}/../${dir_name})
+if (onnxruntime_OPENENCLAVE_BUILD_ENCLAVE)
+    unset(CMAKE_C_IMPLICIT_INCLUDE_DIRECTORIES)
+    unset(CMAKE_CXX_IMPLICIT_INCLUDE_DIRECTORIES)
+endif()
+set(ONNXRUNTIME_C_COMPILER_INC ${ONNXRUNTIME_C_COMPILER_INC})
 
 # Open Enclave lacks some non-standard headers that are typically
 # expected to exist, so let's add them here.

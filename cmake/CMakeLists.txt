@@ -1582,6 +1582,7 @@ if (onnxruntime_OPENENCLAVE_BUILD_ENCLAVE)
     onnxruntime_session
     onnxruntime_util
     onnxruntime_mlas
+    onnxruntime_flatbuffers
     )
 
   foreach(openenclave_lib ${openenclave_libraries})

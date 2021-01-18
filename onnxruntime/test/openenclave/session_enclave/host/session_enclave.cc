@@ -13,6 +13,8 @@
 #include "session_enclave.h"
 
 #include "test/onnx/tensorprotoutils.h"
+#include "test/onnx/callback.h"
+#include "test/onnx/mem_buffer.h"
 
 namespace onnxruntime {
 namespace openenclave {
@@ -165,12 +167,12 @@ std::vector<Ort::Value> SessionEnclave::Run(const std::vector<Ort::Value>& input
       Ort::AllocatorWithDefaultOptions allocator{};
       void* output_buf_tensor = allocator.Alloc(tensor_memsize);
       Ort::Value output{nullptr};
-      auto deleter = std::make_unique<onnxruntime::test::OrtCallback>();
+      onnxruntime::test::OrtCallback deleter;
 
       status = onnxruntime::test::TensorProtoToMLValue(
           tensorproto,
           onnxruntime::test::MemBuffer(output_buf_tensor, tensor_memsize, *allocator.GetInfo()),
-          output, *deleter);
+          output, deleter);
       if (!status.IsOK()) {
         ORT_THROW(status.ToString());
       }

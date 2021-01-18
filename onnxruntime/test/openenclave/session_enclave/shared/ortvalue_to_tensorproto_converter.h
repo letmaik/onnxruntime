@@ -11,7 +11,7 @@
 #include "core/framework/tensor.h"
 #include "core/framework/tensorprotoutils.h"
 
-#include "onnx-ml.pb.h"
+#include "onnx/onnx-ml.pb.h"
 
 // TODO copied from onnxruntime/server/converter.cc (except OrtValueToTensorProto)
 

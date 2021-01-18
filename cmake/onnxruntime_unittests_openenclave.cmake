@@ -5,13 +5,7 @@ set(TEST_SRC_DIR ${ONNXRUNTIME_ROOT}/test)
 set(TEST_INC_DIR ${ONNXRUNTIME_ROOT})
 set(OPENENCLAVE_TEST_SRC_DIR ${TEST_SRC_DIR}/openenclave)
 
-# TODO assess whether gtest unit tests can be run fully inside Open Enclave using the new I/O features
-#      (involves emulating main())
-
-# TODO add backend abstraction to ONNX test runner
-# TODO add Open Enclave backend to ONNX test runner as done for perftest
-
-# Session test enclave (used in perftest, session-based unit tests, and eventually in ONNX test runner)
+# Session test enclave (used in perftest and session-based unit tests)
 set(session_enclave_src_dir ${OPENENCLAVE_TEST_SRC_DIR}/session_enclave)
 set(session_enclave_edl_path ${session_enclave_src_dir}/shared/session.edl)
 
@@ -34,21 +28,7 @@ if (onnxruntime_OPENENCLAVE_BUILD_ENCLAVE)
         ${CMAKE_CURRENT_BINARY_DIR}/onnx)
     onnxruntime_add_include_to_target(onnxruntime_session_test_enclave onnx safeint_interface)
     add_dependencies(onnxruntime_session_test_enclave onnx_proto)
-    # Generated session_t.c violates strict aliasing rules, ignore.
-    # TODO remove once https://github.com/Microsoft/openenclave/issues/1541 lands
-    target_compile_options(onnxruntime_session_test_enclave PRIVATE -Wno-error=strict-aliasing)
     set_target_properties(onnxruntime_session_test_enclave PROPERTIES FOLDER "ONNXRuntimeTest")
-
-    # Sanity checks.
-    add_custom_command(TARGET onnxruntime_session_test_enclave POST_BUILD
-      # Print all dynamically linked symbols and libraries for debug purposes.
-      COMMAND nm -u $<TARGET_FILE:onnxruntime_session_test_enclave> &&
-              ldd -v $<TARGET_FILE:onnxruntime_session_test_enclave> &&
-      # Fail if the enclave image is dynamically linked to some library.
-              ldd $<TARGET_FILE:onnxruntime_session_test_enclave> | grep -q 'statically linked'
-      COMMENT "Checking whether enclave image is statically linked"
-      USES_TERMINAL
-      )
 else()
     # Host wrapper of session test enclave.
     add_custom_command(
@@ -69,9 +49,6 @@ else()
         ${CMAKE_CURRENT_BINARY_DIR}/onnx)
     add_dependencies(onnxruntime_session_test_enclave_host onnx_proto)
     onnxruntime_add_include_to_target(onnxruntime_session_test_enclave_host onnx safeint_interface)
-    # Generated perftest_u.c violates strict aliasing rules, ignore.
-    # TODO remove once https://github.com/Microsoft/openenclave/issues/1541 lands
-    target_compile_options(onnxruntime_session_test_enclave_host PRIVATE -Wno-error=strict-aliasing)
     # prevent symbol clash between libsgx's libprotobuf.so and ONNX RT's libprotobuf.a
     target_link_options(onnxruntime_session_test_enclave_host INTERFACE
         LINKER:--version-script=${OPENENCLAVE_TEST_SRC_DIR}/no_symbols.txt
@@ -99,7 +76,7 @@ else()
         add_dependencies(${_UT_TARGET} ${_UT_DEPENDS})
       endif(_UT_DEPENDS)
       target_link_libraries(${_UT_TARGET} PRIVATE ${_UT_LIBS} gtest gmock ${onnxruntime_EXTERNAL_LIBRARIES})
-      onnxruntime_add_include_to_target(${_UT_TARGET} date_interface safeint_interface)
+      onnxruntime_add_include_to_target(${_UT_TARGET} date_interface flatbuffers)
       target_include_directories(${_UT_TARGET} PRIVATE ${TEST_INC_DIR})
       #target_compile_options(${_UT_TARGET} PRIVATE "-Wno-error=sign-compare")
 
@@ -122,7 +99,7 @@ else()
     )
 
     add_library(onnxruntime_test_oe_utils ${onnxruntime_test_utils_src})
-    onnxruntime_add_include_to_target(onnxruntime_test_oe_utils onnxruntime_framework gtest onnx onnx_proto safeint_interface)
+    onnxruntime_add_include_to_target(onnxruntime_test_oe_utils onnxruntime_common onnxruntime_framework GTest::gtest GTest::gmock onnx onnx_proto safeint_interface)
     if (onnxruntime_USE_FULL_PROTOBUF)
       target_compile_definitions(onnxruntime_test_oe_utils PRIVATE USE_FULL_PROTOBUF=1)
     endif()
@@ -143,6 +120,7 @@ else()
       onnxruntime_graph
       onnxruntime_common
       onnxruntime_mlas
+      onnxruntime_flatbuffers
       libprotobuf
       )
 

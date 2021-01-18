@@ -24,7 +24,6 @@ class OnnxRuntimeOpenEnclaveTestSession : public TestSession {
   OnnxRuntimeOpenEnclaveTestSession(std::random_device& rd,
                                     const PerformanceTestConfig& performance_test_config, const TestModelInfo& m)
       : rand_engine_(rd()), input_length_(m.GetInputCount()), session_enclave_(performance_test_config.machine_config.enclave_file_path, true /* debug */, performance_test_config.run_config.enable_openenclave_simulation) {
-    // TODO expose as CLI options
     inference_timestamps_path_ = performance_test_config.model_info.result_file_path + ".inference_timestamps";
 
     const std::string& provider_name = performance_test_config.machine_config.provider_type_name;
@@ -79,7 +78,7 @@ class OnnxRuntimeOpenEnclaveTestSession : public TestSession {
     return duration_seconds;
   }
 
-  void PreLoadTestData(size_t test_data_id, size_t input_id, OrtValue* value) override {
+  void PreLoadTestData(size_t test_data_id, size_t input_id, Ort::Value&& value) override {
     if (test_inputs_.size() < test_data_id + 1) {
       test_inputs_.resize(test_data_id + 1);
     }
@@ -87,7 +86,7 @@ class OnnxRuntimeOpenEnclaveTestSession : public TestSession {
       for (size_t i = 0; i < input_length_; i++)
         test_inputs_[test_data_id].emplace_back(nullptr);
     }
-    test_inputs_[test_data_id][input_id] = Ort::Value{value};
+    test_inputs_[test_data_id][input_id] = std::move(value);
   }
 
   ORT_DISALLOW_COPY_ASSIGNMENT_AND_MOVE(OnnxRuntimeOpenEnclaveTestSession);

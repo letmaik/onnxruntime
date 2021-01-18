@@ -19,11 +19,14 @@
 // Using the C interface (instead of C++) as it makes error handling
 // more convenient in the enclave interface functions.
 #include "core/session/onnxruntime_c_api.h"
+#include "core/session/onnxruntime_cxx_api.h"
 #include "test/openenclave/session_enclave/shared/ortvalue_to_tensorproto_converter.h"
 #include "session_t.h"  // generated from session.edl
 #include "threading.h"
 
 #include "test/onnx/tensorprotoutils.h"
+#include "test/onnx/callback.h"
+#include "test/onnx/mem_buffer.h"
 
 using namespace onnxruntime::openenclave;
 

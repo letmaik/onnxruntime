@@ -169,6 +169,7 @@ fi
 
 $DOCKER_CMD rm -f "onnxruntime-$BUILD_DEVICE" || true
 $DOCKER_CMD run $RUNTIME -h $HOSTNAME $DOCKER_RUN_PARAMETER \
+    -e VERBOSE=1 \
     -e NIGHTLY_BUILD \
     -e $ALLOW_RELEASED_ONNX_OPSET_ONLY_ENV \
     "onnxruntime-$IMAGE" \
